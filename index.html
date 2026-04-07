@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>ALM Chat — مراسلة عبر QR</title>
+<style>
+body {
+  margin: 0;
+  font-family: "Cairo", sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+}
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #111827;
+}
+.header {
+  padding: 12px 16px;
+  background: #111827;
+  border-bottom: 1px solid #1f2933;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.header-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.header-sub {
+  font-size: 11px;
+  color: #9ca3af;
+}
+.chat-window {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+  background: #020617;
+}
+.msg {
+  max-width: 80%;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.msg.me {
+  margin-left: auto;
+  background: #15803d;
+}
+.msg.other {
+  margin-right: auto;
+  background: #1f2937;
+}
+.footer {
+  padding: 8px;
+  border-top: 1px solid #1f2933;
+  background: #111827;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.row {
+  display: flex;
+  gap: 6px;
+}
+input, textarea {
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: #020617;
+  color: #e5e7eb;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+textarea {
+  resize: none;
+  height: 50px;
+}
+button {
+  border-radius: 8px;
+  border: none;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #2563eb;
+  color: white;
+}
+button.secondary {
+  background: #4b5563;
+}
+#qrcode {
+  text-align: center;
+  padding: 8px 0;
+}
+#reader {
+  display: none;
+  margin-top: 6px;
+}
+.small-label {
+  font-size: 11px;
+  color: #9ca3af;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+</head>
+<body>
+
+<div class="app">
+  <div class="header">
+    <div>
+      <div class="header-title">ALM Chat</div>
+      <div class="header-sub">مراسلة عبر بروتوكول Arabic Language Mapping</div>
+    </div>
+    <div style="font-size:11px;">
+      مفتاح: <input id="userKey" type="number" value="123456789" style="width:90px;">
+    </div>
+  </div>
+
+  <div id="chatWindow" class="chat-window">
+    <!-- الرسائل تظهر هنا -->
+  </div>
+
+  <div id="qrcode"></div>
+  <div id="reader"></div>
+
+  <div class="footer">
+    <div class="small-label">اكتب رسالتك ثم اضغط “إرسال كـ QR” ليقرأها الطرف الآخر بالكاميرا.</div>
+    <textarea id="messageInput" placeholder="اكتب رسالة..."></textarea>
+    <div class="row">
+      <button onclick="sendAsQR()">إرسال كـ QR</button>
+      <button class="secondary" onclick="startScan()">استقبال رسالة من QR</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ثوابت ALM */
+const B = 32;
+const LMAX = 12;
+const f0 = 100000n;
+const df = 1n;
+
+/* تطبيع العربية */
+function normalizeArabic(s) {
+  return (s || "")
+    .replace(/[إأآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g, "");
+}
+
+/* جدول الحروف */
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",
+  29:"ء"
+};
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i, 10);
+}
+
+/* BigInt ↔ base36 */
+function bigIntToBase36(n) {
+  return n.toString(36);
+}
+function base36ToBigInt(str) {
+  let res = 0n;
+  for (let i = 0; i < str.length; i++) {
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
+  }
+  return res;
+}
+
+/* تقسيم الكلمة */
+function splitWord(word) {
+  const blocks = [];
+  for (let i = 0; i < word.length; i += LMAX) {
+    blocks.push(word.slice(i, i + LMAX));
+  }
+  return blocks;
+}
+
+/* كلمة → كود */
+function wordToCode(word){
+  const c = new Array(LMAX).fill(0);
+  let pos = 0;
+  for (let i = word.length - 1; i >= 0; i--){
+    const idx = charToIndex[word[i]];
+    if (idx === undefined) continue;
+    c[pos++] = idx;
+  }
+  let C = 0n;
+  for (let i = 0; i < LMAX; i++){
+    C += BigInt(c[i]) * (BigInt(B) ** BigInt(i));
+  }
+  return C;
+}
+
+/* كود → كلمة */
+function codeToWord(Cbig){
+  let C = BigInt(Cbig);
+  const digits = [];
+  for (let i = 0; i < LMAX; i++){
+    digits.push(Number(C % BigInt(B)));
+    C /= BigInt(B);
+  }
+  let w = "";
+  for (let i = LMAX - 1; i >= 0; i--){
+    w += indexToChar[digits[i]] || "";
+  }
+  return w;
+}
+
+/* إضافة رسالة للواجهة */
+function addMessage(text, who) {
+  const chat = document.getElementById("chatWindow");
+  const div = document.createElement("div");
+  div.className = "msg " + (who === "me" ? "me" : "other");
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+/* إرسال كـ QR باستخدام ALM */
+function sendAsQR(){
+  const key = BigInt(document.getElementById("userKey").value || "0");
+  const rawText = document.getElementById("messageInput").value.trim();
+  if (!rawText) return;
+
+  addMessage(rawText, "me");
+
+  const sentence = normalizeArabic(rawText);
+  const words = sentence.split(/\s+/);
+  const freqs36 = [];
+
+  words.forEach(word => {
+    if (!word) return;
+    const blocks = splitWord(word);
+    blocks.forEach(block => {
+      const C  = wordToCode(block);
+      const C2 = C ^ key;
+      const fFull = f0 + C2 * df;
+      const f36 = bigIntToBase36(fFull);
+      freqs36.push(f36);
+    });
+  });
+
+  const payload = freqs36.join(",");
+  const compressed = LZString.compressToEncodedURIComponent(payload);
+  const finalText = "ALM/1.0;" + compressed;
+
+  document.getElementById("qrcode").innerHTML = "";
+  new QRCode(document.getElementById("qrcode"), {
+    text: finalText,
+    width: 220,
+    height: 220,
+    correctLevel: QRCode.CorrectLevel.M
+  });
+
+  document.getElementById("messageInput").value = "";
+}
+
+/* بدء المسح */
+let html5QrInstance = null;
+function startScan(){
+  const reader = document.getElementById("reader");
+  if (html5QrInstance) {
+    html5QrInstance.stop().then(() => {
+      html5QrInstance.clear();
+      html5QrInstance = null;
+      reader.style.display = "none";
+    });
+    return;
+  }
+
+  reader.style.display = "block";
+  html5QrInstance = new Html5Qrcode("reader");
+
+  html5QrInstance.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 220 },
+    qrText => {
+      handleScannedText(qrText);
+      html5QrInstance.stop().then(() => {
+        html5QrInstance.clear();
+        html5QrInstance = null;
+        reader.style.display = "none";
+      });
+    }
+  );
+}
+
+/* معالجة النص الممسوح */
+function handleScannedText(qrText){
+  const key = BigInt(document.getElementById("userKey").value || "0");
+  if (!qrText.startsWith("ALM/1.0;")) {
+    addMessage("بيانات غير متوافقة مع بروتوكول ALM", "other");
+    return;
+  }
+  const data = qrText.slice("ALM/1.0;".length);
+  const raw = LZString.decompressFromEncodedURIComponent(data);
+  if (!raw) {
+    addMessage("فشل في فك الضغط من بيانات ALM", "other");
+    return;
+  }
+
+  const freqs36 = raw.split(",");
+  const words = [];
+
+  freqs36.forEach(f36 => {
+    if (!f36) return;
+    const fFull = base36ToBigInt(f36);
+    const C2 = (fFull - f0) / df;
+    const C  = C2 ^ key;
+    const block = codeToWord(C);
+    words.push(block);
+  });
+
+  const msg = words.join(" ");
+  addMessage(msg, "other");
+}
+</script>
+
+</body>
+</html>
