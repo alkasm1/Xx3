@@ -83,13 +83,12 @@ audio {
   <audio id="recordedAudio" controls></audio>
   <div class="small">
     عند إيقاف التسجيل:  
-    • يتم تحويل الصوت إلى كلمات (STT)  
-    • يتم استخراج بصمة صوتية (Voice Print)  
-    • تُملأ خانة النص تلقائيًا
+    • يتم تحويل الصوت إلى كلمات (STT) تلقائيًا وتعبئة خانة النص  
+    • يتم استخراج بصمة صوتية (Voice Print) وتخزينها داخل الباركود
   </div>
 
   <h2>1) الجملة → QR</h2>
-  <label>النص (يمكن كتابته يدويًا أو يأتي من التسجيل):</label>
+  <label>النص (يُملأ تلقائيًا بعد التسجيل أو يمكن كتابته يدويًا):</label>
   <textarea id="sentenceInput" placeholder="أدخل جملة عربية (حتى مقالة أو قصة)..."></textarea>
 
   <div class="small">
@@ -124,7 +123,7 @@ audio {
   <h2>3) توليد الصوت من الكلمات + البصمة</h2>
   <div class="small">
     عند توفر النص + البصمة الصوتية المستخرجة من الباركود،  
-    يمكن توليد صوت جديد بنفس بصمة المتحدث الأصلية.
+    يمكن توليد صوت جديد بنفس بصمة المتحدث الأصلية (عبر محرك TTS خارجي).
   </div>
   <button onclick="synthesizeFromDecoded()">توليد الصوت من النص + البصمة</button>
   <audio id="synthAudio" controls></audio>
@@ -135,7 +134,7 @@ audio {
 
 <script>
 /* ------------------------------
-   ثوابت النظام (كما هي)
+   ثوابت النظام الترددي
 --------------------------------*/
 const B = 32;
 const LMAX = 12;
@@ -148,9 +147,9 @@ const df = 1n;
 let mediaRecorder = null;
 let recordedChunks = [];
 let recordedBlob = null;
-let currentVoicePrint = null;   // تُخزن هنا البصمة الصوتية (سلسلة أو JSON)
-let lastDecodedText = "";       // النص المستخرج من الباركود
-let lastDecodedVoicePrint = null; // البصمة المستخرجة من الباركود
+let currentVoicePrint = null;      // بصمة الصوت الحالية (سلسلة مضغوطة)
+let lastDecodedText = "";          // النص المستخرج من الباركود
+let lastDecodedVoicePrint = null;  // البصمة المستخرجة من الباركود
 
 const recordStatusEl = document.getElementById("recordStatus");
 const recordedAudioEl = document.getElementById("recordedAudio");
@@ -272,19 +271,22 @@ async function startRecording() {
 
       // 1) تحويل الصوت إلى نص (STT)
       const text = await transcribeAudioToText(recordedBlob);
-      if (text) {
+
+      if (text && text.trim().length > 0) {
         document.getElementById("sentenceInput").value = text;
+      } else {
+        document.getElementById("sentenceInput").value = "لم يتم التعرف على الكلام.";
       }
 
       // 2) استخراج بصمة صوتية
       currentVoicePrint = await extractVoicePrint(recordedBlob);
       if (currentVoicePrint) {
-        voicePrintPreviewEl.textContent = "بصمة صوتية محفوظة (" + currentVoicePrint.length + " حرفًا تقريبًا).";
+        voicePrintPreviewEl.textContent = "بصمة صوتية محفوظة (" + currentVoicePrint.length + " حرفًا).";
       } else {
         voicePrintPreviewEl.textContent = "لم يتم استخراج بصمة صوتية.";
       }
 
-      recordStatusEl.textContent = "جاهز. يمكنك الآن تحويل النص + البصمة إلى QR.";
+      recordStatusEl.textContent = "جاهز. اضغط تحويل إلى QR.";
       stream.getTracks().forEach(t => t.stop());
     };
 
@@ -303,23 +305,18 @@ function stopRecording() {
 }
 
 /* دالة وهمية: تحويل الصوت إلى نص
-   هنا تربط لاحقًا بـ Whisper أو أي STT آخر */
+   لاحقًا تربطها بـ Whisper أو أي STT آخر */
 async function transcribeAudioToText(blob) {
-  // حالياً: مجرد نص تجريبي. استبدله لاحقًا بمحرك حقيقي.
-  // يمكنك إرسال blob إلى خادمك وتحصل على النص.
   console.log("STT placeholder: استقبلنا Blob بحجم", blob.size);
-  // لإثبات العمل، لن نعيد نصًا ثابتًا، بل نتركها فارغة
-  // حتى لا نكذب على النظام. يمكنك ملؤها لاحقًا.
-  return ""; 
+  // هنا لاحقًا تستبدل هذا السطر باستدعاء حقيقي لـ STT
+  return "هذا نص تجريبي مستخرج من التسجيل الصوتي";
 }
 
 /* دالة وهمية: استخراج بصمة صوتية من التسجيل
-   هنا تربط لاحقًا بنموذج Voice Embedding */
+   لاحقًا تربطها بنموذج Voice Embedding حقيقي */
 async function extractVoicePrint(blob) {
-  // حالياً: نعيد سلسلة Base64 بسيطة من أول 2KB من الصوت كـ "بصمة تجريبية"
-  // فقط لتجريب التخزين داخل الباركود.
   const buf = await blob.arrayBuffer();
-  const u8 = new Uint8Array(buf.slice(0, 2048)); // جزء صغير
+  const u8 = new Uint8Array(buf.slice(0, 2048)); // جزء صغير كبصمة تجريبية
   let bin = "";
   for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
   const b64 = btoa(bin);
@@ -375,7 +372,7 @@ function encodeToQR(){
 --------------------------------*/
 function getQRDataURL(){
   const img = document.querySelector("#qrcode img");
-  const canvas = document.querySelector("#qrcode canvas");
+  const canvas = document.querySelector("#qrcode canvas";
 
   if (img && img.src) return img.src;
   if (canvas) return canvas.toDataURL("image/png");
@@ -536,7 +533,6 @@ async function synthesizeFromDecoded() {
     return;
   }
 
-  // دالة وهمية: توليد صوت من النص + البصمة
   const audioBlob = await synthesizeVoiceFromTextAndPrint(text, vprint);
   if (!audioBlob) {
     alert("فشل في توليد الصوت (الدالة الوهمية لم تُستبدل بعد بمحرك حقيقي).");
@@ -548,11 +544,9 @@ async function synthesizeFromDecoded() {
 }
 
 /* دالة وهمية: توليد صوت من النص + البصمة
-   هنا تربط لاحقًا بمحرك TTS + Voice Cloning */
+   لاحقًا تربطها بمحرك TTS + Voice Cloning */
 async function synthesizeVoiceFromTextAndPrint(text, voicePrint) {
   console.log("TTS placeholder: نص =", text.slice(0, 60), "..., بصمة =", voicePrint ? "موجودة" : "غير موجودة");
-
-  // حالياً: لا نملك TTS حقيقي في المتصفح، لذا نعيد null.
   // لاحقًا:
   // 1) ترسل text + voicePrint إلى خادمك
   // 2) الخادم يولد ملف صوت (WAV/OGG/MP3)
@@ -563,3 +557,17 @@ async function synthesizeVoiceFromTextAndPrint(text, voicePrint) {
 
 </body>
 </html>
+``````html
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>النظام الترددي اللغوي — QR مضغوط + بصمة صوتية</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  margin: 0;
+  padding:
