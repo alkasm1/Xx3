@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>النظام الترددي اللغوي — QR مضغوط + بصمة صوتية</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  margin: 0;
+  padding: 0;
+}
+.container {
+  max-width: 900px;
+  margin: 40px auto;
+  background: #161b22;
+  border-radius: 14px;
+  padding: 28px;
+  border: 1px solid #30363d;
+}
+h1 { text-align: center; color: #58a6ff; }
+h2 { color: #79c0ff; }
+textarea, input {
+  width: 100%; padding: 10px; margin-top: 6px;
+  border-radius: 8px; border: 1px solid #30363d;
+  background: #0d1117; color: #e6edf3;
+}
+button {
+  margin-top: 12px; padding: 10px 18px;
+  border-radius: 8px; border: none;
+  background: #238636; color: white;
+  cursor: pointer;
+}
+button:hover { background: #2ea043; }
+.output {
+  margin-top: 10px; padding: 12px;
+  background: #0d1117; border: 1px dashed #30363d;
+  border-radius: 8px; white-space: pre-wrap;
+}
+#qrcode { margin-top: 20px; text-align: center; }
+#reader { width: 100%; margin-top: 20px; }
+.small {
+  font-size: 12px;
+  color: #8b949e;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+audio {
+  margin-top: 8px;
+  width: 100%;
+}
+</style>
+
+<!-- QRCode -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- QR Scanner -->
+<script src="https://unpkg.com/html5-qrcode"></script>
+<!-- LZ-String للضغط -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+</head>
+<body>
+
+<div class="container">
+  <h1>النظام الترددي اللغوي — نسخة مضغوطة + بصمة صوتية</h1>
+
+  <label>مفتاح المستخدم:</label>
+  <input id="userKey" type="number" value="123456789">
+
+  <!-- قسم التسجيل الصوتي -->
+  <h2>0) تسجيل الصوت → كلمات + بصمة صوتية</h2>
+  <div class="row">
+    <button onclick="startRecording()">بدء التسجيل</button>
+    <button onclick="stopRecording()">إيقاف التسجيل</button>
+    <span id="recordStatus" class="small">لم يبدأ التسجيل بعد.</span>
+  </div>
+  <audio id="recordedAudio" controls></audio>
+  <div class="small">
+    عند إيقاف التسجيل:  
+    • يتم تحويل الصوت إلى كلمات (STT)  
+    • يتم استخراج بصمة صوتية (Voice Print)  
+    • تُملأ خانة النص تلقائيًا
+  </div>
+
+  <h2>1) الجملة → QR</h2>
+  <label>النص (يمكن كتابته يدويًا أو يأتي من التسجيل):</label>
+  <textarea id="sentenceInput" placeholder="أدخل جملة عربية (حتى مقالة أو قصة)..."></textarea>
+
+  <div class="small">
+    البصمة الصوتية الحالية (لن تُعرض كاملة، لكنها تُخزن داخل الباركود):  
+    <span id="voicePrintPreview">لا توجد بصمة بعد.</span>
+  </div>
+
+  <button onclick="encodeToQR()">تحويل إلى QR (نص + بصمة صوتية)</button>
+  <button onclick="saveQR()">حفظ صورة QR</button>
+
+  <div id="qrcode"></div>
+
+  <div style="text-align:center; margin-top:10px;">
+    <button onclick="shareQR()">مشاركة الباركود</button>
+  </div>
+
+  <h2>2) QR → كلمات + بصمة صوتية</h2>
+
+  <button onclick="startScanner()">مسح الباركود بالكاميرا</button>
+
+  <label>النص المستخرج من QR (مضغوط):</label>
+  <textarea id="qrInput" placeholder="الصق النص من QR أو ارفع صورة QR..."></textarea>
+
+  <label>أو اختر صورة QR من جهازك:</label>
+  <input id="qrFileInput" type="file" accept="image/*" />
+
+  <button onclick="decodeFromQR()">تحويل الباركود إلى كلمات + بصمة</button>
+  <button onclick="decodeFromQRImage()">تحويل صورة QR إلى كلمات + بصمة</button>
+
+  <div class="output" id="decodeOutput">—</div>
+
+  <h2>3) توليد الصوت من الكلمات + البصمة</h2>
+  <div class="small">
+    عند توفر النص + البصمة الصوتية المستخرجة من الباركود،  
+    يمكن توليد صوت جديد بنفس بصمة المتحدث الأصلية.
+  </div>
+  <button onclick="synthesizeFromDecoded()">توليد الصوت من النص + البصمة</button>
+  <audio id="synthAudio" controls></audio>
+</div>
+
+<div id="reader" style="display:none;"></div>
+<div id="reader-temp" style="display:none;"></div>
+
+<script>
+/* ------------------------------
+   ثوابت النظام (كما هي)
+--------------------------------*/
+const B = 32;
+const LMAX = 12;
+const f0 = 100000n;
+const df = 1n;
+
+/* ------------------------------
+   حالة التسجيل والبصمة
+--------------------------------*/
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordedBlob = null;
+let currentVoicePrint = null;   // تُخزن هنا البصمة الصوتية (سلسلة أو JSON)
+let lastDecodedText = "";       // النص المستخرج من الباركود
+let lastDecodedVoicePrint = null; // البصمة المستخرجة من الباركود
+
+const recordStatusEl = document.getElementById("recordStatus");
+const recordedAudioEl = document.getElementById("recordedAudio");
+const voicePrintPreviewEl = document.getElementById("voicePrintPreview");
+
+/* ------------------------------
+   تنظيف النص + دعم الهمزة
+--------------------------------*/
+function normalizeArabic(s) {
+  return (s || "")
+    .replace(/[إأآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g, ""); // حذف الرموز
+}
+
+/* ------------------------------
+   جدول الحروف + الهمزة
+--------------------------------*/
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",
+  29:"ء"
+};
+
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i, 10);
+}
+
+/* ------------------------------
+   BigInt ↔ base36
+--------------------------------*/
+function bigIntToBase36(n) {
+  return n.toString(36);
+}
+
+function base36ToBigInt(str) {
+  let res = 0n;
+  for (let i = 0; i < str.length; i++) {
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
+  }
+  return res;
+}
+
+/* ------------------------------
+   تقسيم الكلمة إلى بلوكات
+--------------------------------*/
+function splitWord(word) {
+  const blocks = [];
+  for (let i = 0; i < word.length; i += LMAX) {
+    blocks.push(word.slice(i, i + LMAX));
+  }
+  return blocks;
+}
+
+/* ------------------------------
+   كلمة → رقم
+--------------------------------*/
+function wordToCode(word){
+  const c = new Array(LMAX).fill(0);
+  let pos = 0;
+
+  for (let i = word.length - 1; i >= 0; i--){
+    const idx = charToIndex[word[i]];
+    if (idx === undefined) continue;
+    c[pos++] = idx;
+  }
+
+  let C = 0n;
+  for (let i = 0; i < LMAX; i++){
+    C += BigInt(c[i]) * (BigInt(B) ** BigInt(i));
+  }
+  return C;
+}
+
+/* ------------------------------
+   رقم → كلمة
+--------------------------------*/
+function codeToWord(Cbig){
+  let C = BigInt(Cbig);
+  const digits = [];
+
+  for (let i = 0; i < LMAX; i++){
+    digits.push(Number(C % BigInt(B)));
+    C /= BigInt(B);
+  }
+
+  let w = "";
+  for (let i = LMAX - 1; i >= 0; i--){
+    w += indexToChar[digits[i]] || "";
+  }
+  return w;
+}
+
+/* ==============================
+   0) التسجيل + STT + بصمة صوتية
+   ============================== */
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      recordedBlob = new Blob(recordedChunks, { type: "audio/webm" });
+      recordedAudioEl.src = URL.createObjectURL(recordedBlob);
+      recordStatusEl.textContent = "تم إيقاف التسجيل. جاري تحليل الصوت...";
+
+      // 1) تحويل الصوت إلى نص (STT)
+      const text = await transcribeAudioToText(recordedBlob);
+      if (text) {
+        document.getElementById("sentenceInput").value = text;
+      }
+
+      // 2) استخراج بصمة صوتية
+      currentVoicePrint = await extractVoicePrint(recordedBlob);
+      if (currentVoicePrint) {
+        voicePrintPreviewEl.textContent = "بصمة صوتية محفوظة (" + currentVoicePrint.length + " حرفًا تقريبًا).";
+      } else {
+        voicePrintPreviewEl.textContent = "لم يتم استخراج بصمة صوتية.";
+      }
+
+      recordStatusEl.textContent = "جاهز. يمكنك الآن تحويل النص + البصمة إلى QR.";
+      stream.getTracks().forEach(t => t.stop());
+    };
+
+    mediaRecorder.start();
+    recordStatusEl.textContent = "جاري التسجيل...";
+  } catch (e) {
+    recordStatusEl.textContent = "فشل الوصول للميكروفون.";
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop();
+    recordStatusEl.textContent = "جاري إنهاء التسجيل...";
+  }
+}
+
+/* دالة وهمية: تحويل الصوت إلى نص
+   هنا تربط لاحقًا بـ Whisper أو أي STT آخر */
+async function transcribeAudioToText(blob) {
+  // حالياً: مجرد نص تجريبي. استبدله لاحقًا بمحرك حقيقي.
+  // يمكنك إرسال blob إلى خادمك وتحصل على النص.
+  console.log("STT placeholder: استقبلنا Blob بحجم", blob.size);
+  // لإثبات العمل، لن نعيد نصًا ثابتًا، بل نتركها فارغة
+  // حتى لا نكذب على النظام. يمكنك ملؤها لاحقًا.
+  return ""; 
+}
+
+/* دالة وهمية: استخراج بصمة صوتية من التسجيل
+   هنا تربط لاحقًا بنموذج Voice Embedding */
+async function extractVoicePrint(blob) {
+  // حالياً: نعيد سلسلة Base64 بسيطة من أول 2KB من الصوت كـ "بصمة تجريبية"
+  // فقط لتجريب التخزين داخل الباركود.
+  const buf = await blob.arrayBuffer();
+  const u8 = new Uint8Array(buf.slice(0, 2048)); // جزء صغير
+  let bin = "";
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  const b64 = btoa(bin);
+  return b64; // لاحقًا تستبدلها ببصمة حقيقية (قائمة أرقام مثلاً)
+}
+
+/* ==============================
+   1) توليد QR (نص + بصمة صوتية)
+   ============================== */
+
+function encodeToQR(){
+  const key = BigInt(document.getElementById("userKey").value || "0");
+  const sentenceRaw = document.getElementById("sentenceInput").value.trim();
+  const sentence = normalizeArabic(sentenceRaw);
+  if (!sentence) return;
+
+  const words = sentence.split(/\s+/);
+  const freqs36 = [];
+
+  words.forEach(word => {
+    const blocks = splitWord(word);
+    blocks.forEach(block => {
+      const C  = wordToCode(block);
+      const C2 = C ^ key;
+      const fFull = f0 + C2 * df;
+      const f36 = bigIntToBase36(fFull);
+      freqs36.push(f36);
+    });
+  });
+
+  const rawFreqs = freqs36.join(",");
+
+  // حزمة البيانات: نص مشفر تردديًا + بصمة صوتية (إن وجدت)
+  const payload = {
+    f: rawFreqs,                 // التمثيل الترددي للنص
+    v: currentVoicePrint || null // البصمة الصوتية (قد تكون null)
+  };
+
+  const json = JSON.stringify(payload);
+  const compressed = LZString.compressToEncodedURIComponent(json);
+
+  document.getElementById("qrcode").innerHTML = "";
+  new QRCode(document.getElementById("qrcode"), {
+    text: compressed,
+    width: 300,
+    height: 300,
+    correctLevel: QRCode.CorrectLevel.M
+  });
+}
+
+/* ------------------------------
+   الحصول على صورة QR
+--------------------------------*/
+function getQRDataURL(){
+  const img = document.querySelector("#qrcode img");
+  const canvas = document.querySelector("#qrcode canvas");
+
+  if (img && img.src) return img.src;
+  if (canvas) return canvas.toDataURL("image/png");
+  return null;
+}
+
+/* ------------------------------
+   حفظ QR
+--------------------------------*/
+function saveQR(){
+  const dataUrl = getQRDataURL();
+  if (!dataUrl) return;
+
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = "qr-code.png";
+  link.click();
+}
+
+/* ------------------------------
+   مشاركة QR
+--------------------------------*/
+async function shareQR(){
+  const dataUrl = getQRDataURL();
+  if (!dataUrl) return;
+
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const file = new File([blob], "qr-code.png", { type: "image/png" });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({
+      files: [file],
+      title: "QR Code",
+      text: "صورة الباركود"
+    });
+  }
+}
+
+/* ------------------------------
+   مسح بالكاميرا
+--------------------------------*/
+function startScanner(){
+  const reader = document.getElementById("reader");
+  reader.style.display = "block";
+
+  const html5Qr = new Html5Qrcode("reader");
+
+  html5Qr.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 250 },
+    qrText => {
+      document.getElementById("qrInput").value = qrText;
+      html5Qr.stop();
+      reader.style.display = "none";
+    }
+  );
+}
+
+/* ==============================
+   2) فك QR من النص/الصورة
+   ============================== */
+
+function decodePayloadAndShow(jsonStr) {
+  const key = BigInt(document.getElementById("userKey").value || "0");
+
+  let payload;
+  try {
+    payload = JSON.parse(jsonStr);
+  } catch (e) {
+    document.getElementById("decodeOutput").textContent = "فشل في قراءة JSON من البيانات المفكوكة.";
+    return;
+  }
+
+  const rawFreqs = payload.f || "";
+  const voicePrint = payload.v || null;
+
+  if (!rawFreqs) {
+    document.getElementById("decodeOutput").textContent = "لا توجد بيانات ترددية للنص داخل الباركود.";
+    return;
+  }
+
+  const freqs36 = rawFreqs.split(",");
+  const words = [];
+
+  freqs36.forEach(f36 => {
+    if (!f36) return;
+    const fFull = base36ToBigInt(f36);
+    const C2 = (fFull - f0) / df;
+    const C  = C2 ^ key;
+    const block = codeToWord(C);
+    words.push(block);
+  });
+
+  const text = words.join(" ");
+  lastDecodedText = text;
+  lastDecodedVoicePrint = voicePrint;
+
+  let msg = "النص المستخرج:\n" + text;
+  msg += "\n\n";
+  if (voicePrint) {
+    msg += "تم استخراج بصمة صوتية (طول السلسلة: " + voicePrint.length + " حرفًا تقريبًا).";
+  } else {
+    msg += "لا توجد بصمة صوتية مخزنة في هذا الباركود.";
+  }
+
+  document.getElementById("decodeOutput").textContent = msg;
+}
+
+function decodeFromQR(){
+  const data = document.getElementById("qrInput").value.trim();
+  if (!data) return;
+
+  const jsonStr = LZString.decompressFromEncodedURIComponent(data);
+  if (!jsonStr) {
+    document.getElementById("decodeOutput").textContent = "فشل في فك الضغط من النص.";
+    return;
+  }
+
+  decodePayloadAndShow(jsonStr);
+}
+
+async function decodeFromQRImage(){
+  const fileInput = document.getElementById("qrFileInput");
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const html5Qr = new Html5Qrcode("reader-temp");
+
+  try {
+    const result = await html5Qr.scanFile(file, true);
+    const data = result;
+
+    const jsonStr = LZString.decompressFromEncodedURIComponent(data);
+    if (!jsonStr) {
+      document.getElementById("decodeOutput").textContent = "فشل في فك الضغط من النص داخل صورة الـ QR.";
+      return;
+    }
+
+    decodePayloadAndShow(jsonStr);
+  } catch (e) {
+    document.getElementById("decodeOutput").textContent = "فشل في قراءة صورة الـ QR.";
+  } finally {
+    html5Qr.clear();
+  }
+}
+
+/* ==============================
+   3) توليد الصوت من النص + البصمة
+   ============================== */
+
+async function synthesizeFromDecoded() {
+  const text = lastDecodedText || "";
+  const vprint = lastDecodedVoicePrint;
+
+  if (!text) {
+    alert("لا يوجد نص مستخرج من الباركود بعد.");
+    return;
+  }
+
+  // دالة وهمية: توليد صوت من النص + البصمة
+  const audioBlob = await synthesizeVoiceFromTextAndPrint(text, vprint);
+  if (!audioBlob) {
+    alert("فشل في توليد الصوت (الدالة الوهمية لم تُستبدل بعد بمحرك حقيقي).");
+    return;
+  }
+
+  const url = URL.createObjectURL(audioBlob);
+  document.getElementById("synthAudio").src = url;
+}
+
+/* دالة وهمية: توليد صوت من النص + البصمة
+   هنا تربط لاحقًا بمحرك TTS + Voice Cloning */
+async function synthesizeVoiceFromTextAndPrint(text, voicePrint) {
+  console.log("TTS placeholder: نص =", text.slice(0, 60), "..., بصمة =", voicePrint ? "موجودة" : "غير موجودة");
+
+  // حالياً: لا نملك TTS حقيقي في المتصفح، لذا نعيد null.
+  // لاحقًا:
+  // 1) ترسل text + voicePrint إلى خادمك
+  // 2) الخادم يولد ملف صوت (WAV/OGG/MP3)
+  // 3) يعيده كـ Blob
+  return null;
+}
+</script>
+
+</body>
+</html>
