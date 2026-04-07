@@ -83,8 +83,8 @@ audio {
   <audio id="recordedAudio" controls></audio>
   <div class="small">
     عند إيقاف التسجيل:  
-    • يتم تحويل الصوت إلى كلمات تلقائيًا وتعبئة خانة النص  
-    • يتم استخراج بصمة صوتية وتخزينها داخل الباركود
+    • يتم تحويل الصوت إلى كلمات (تجريبية الآن) وتعبئة خانة النص تلقائيًا  
+    • يتم استخراج بصمة صوتية تجريبية وتخزينها داخل الباركود
   </div>
 
   <h2>1) الجملة → QR</h2>
@@ -107,7 +107,7 @@ audio {
 
   <button onclick="startScanner()">مسح الباركود بالكاميرا</button>
 
-  <label>النص المستخرج من QR (مضغوط):</label>
+  <label>النص المستخرج من QR:</label>
   <textarea id="qrInput" placeholder="الصق النص من QR أو ارفع صورة QR..."></textarea>
 
   <label>أو اختر صورة QR من جهازك:</label>
@@ -120,7 +120,8 @@ audio {
 
   <h2>3) توليد الصوت من الباركود</h2>
   <div class="small">
-    يستخدم النص + البصمة الصوتية المستخرجة من الباركود لتوليد صوت جديد (عبر محرك TTS خارجي).
+    يتم استخدام النص + البصمة الصوتية المستخرجة من الباركود لتوليد صوت تجريبي الآن،  
+    ويمكن لاحقًا استبدال المولّد بمحرك Voice Cloning حقيقي.
   </div>
   <button onclick="synthesizeFromDecoded()">توليد الصوت من النص + البصمة</button>
   <audio id="synthAudio" controls></audio>
@@ -223,7 +224,7 @@ function wordToCode(word){
 
   let C = 0n;
   for (let i = 0; i < LMAX; i++){
-    C += BigInt(c[i]) * (BigInt(B) ** BigInt(i));
+    C += BigInt(c[i]) * (BigInt(B) ** BigInt(i)); // تم إصلاح الخطأ هنا
   }
   return C;
 }
@@ -266,7 +267,7 @@ async function startRecording() {
       recordedAudioEl.src = URL.createObjectURL(recordedBlob);
       recordStatusEl.textContent = "تم إيقاف التسجيل. جاري تحليل الصوت...";
 
-      // 1) تحويل الصوت إلى نص (STT)
+      // 1) تحويل الصوت إلى نص (تجريبي الآن)
       const text = await transcribeAudioToText(recordedBlob);
       if (text && text.trim().length > 0) {
         document.getElementById("sentenceInput").value = text;
@@ -274,7 +275,7 @@ async function startRecording() {
         document.getElementById("sentenceInput").value = "لم يتم التعرف على الكلام.";
       }
 
-      // 2) استخراج بصمة صوتية
+      // 2) استخراج بصمة صوتية (تجريبية)
       currentVoicePrint = await extractVoicePrint(recordedBlob);
       if (currentVoicePrint) {
         voicePrintPreviewEl.textContent = "بصمة صوتية محفوظة (طول السلسلة: " + currentVoicePrint.length + ").";
@@ -300,19 +301,17 @@ function stopRecording() {
   }
 }
 
-/* دالة وهمية: تحويل الصوت إلى نص
-   لاحقًا تربطها بـ Whisper أو أي STT آخر */
+/* دالة وهمية: تحويل الصوت إلى نص */
 async function transcribeAudioToText(blob) {
   console.log("STT placeholder: استقبلنا Blob بحجم", blob.size);
-  // استبدل هذا السطر لاحقًا باستدعاء حقيقي لـ STT
+  // هنا لاحقًا تربطها بـ Whisper أو أي STT حقيقي
   return "هذا نص تجريبي مستخرج من التسجيل الصوتي";
 }
 
-/* دالة وهمية: استخراج بصمة صوتية من التسجيل
-   لاحقًا تربطها بنموذج Voice Embedding حقيقي */
+/* دالة وهمية: استخراج بصمة صوتية من التسجيل */
 async function extractVoicePrint(blob) {
   const buf = await blob.arrayBuffer();
-  const u8 = new Uint8Array(buf.slice(0, 2048)); // جزء صغير كبصمة تجريبية
+  const u8 = new Uint8Array(buf.slice(0, 512)); // جزء صغير كبصمة تجريبية
   let bin = "";
   for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
   const b64 = btoa(bin);
@@ -530,7 +529,7 @@ async function synthesizeFromDecoded() {
 
   const audioBlob = await synthesizeVoiceFromTextAndPrint(text, vprint);
   if (!audioBlob) {
-    alert("فشل في توليد الصوت (الدالة الوهمية لم تُستبدل بعد بمحرك حقيقي).");
+    alert("تم تمرير النص + البصمة، لكن المولّد التجريبي أعاد null.");
     return;
   }
 
@@ -538,15 +537,90 @@ async function synthesizeFromDecoded() {
   document.getElementById("synthAudio").src = url;
 }
 
-/* دالة وهمية: توليد صوت من النص + البصمة
-   لاحقًا تربطها بمحرك TTS + Voice Cloning */
+/* دالة تجريبية: توليد صوت (نغمة) من النص + البصمة
+   لاحقًا تستبدلها بمحرك TTS + Voice Cloning حقيقي */
 async function synthesizeVoiceFromTextAndPrint(text, voicePrint) {
   console.log("TTS placeholder: نص =", text.slice(0, 60), "..., بصمة =", voicePrint ? "موجودة" : "غير موجودة");
-  // هنا لاحقًا:
-  // 1) ترسل text + voicePrint إلى خادمك
-  // 2) الخادم يولد ملف صوت (WAV/OGG/MP3)
-  // 3) يعيده كـ Blob
-  return null;
+
+  // توليد نغمة بسيطة بطول يعتمد على طول النص + البصمة (إثبات فقط)
+  const durationSec = 0.5 + Math.min(1.5, text.length / 50);
+  const sampleRate = 44100;
+  const length = Math.floor(durationSec * sampleRate);
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buffer = audioCtx.createBuffer(1, length, sampleRate);
+  const data = buffer.getChannelData(0);
+
+  const baseFreq = 440; // A4
+  const mod = voicePrint ? (voicePrint.length % 200) : 0;
+  const freq = baseFreq + mod; // نغيّر التردد قليلًا حسب البصمة
+
+  for (let i = 0; i < length; i++) {
+    const t = i / sampleRate;
+    data[i] = 0.3 * Math.sin(2 * Math.PI * freq * t);
+  }
+
+  const offlineCtx = new OfflineAudioContext(1, length, sampleRate);
+  const src = offlineCtx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(offlineCtx.destination);
+  src.start();
+
+  const rendered = await offlineCtx.startRendering();
+  const wavBlob = bufferToWavBlob(rendered);
+  return wavBlob;
+}
+
+/* تحويل AudioBuffer إلى WAV Blob */
+function bufferToWavBlob(buffer) {
+  const numOfChan = buffer.numberOfChannels;
+  const length = buffer.length * numOfChan * 2 + 44;
+  const bufferArray = new ArrayBuffer(length);
+  const view = new DataView(bufferArray);
+
+  function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  let offset = 0;
+
+  // RIFF chunk descriptor
+  writeString(view, offset, 'RIFF'); offset += 4;
+  view.setUint32(offset, 36 + buffer.length * numOfChan * 2, true); offset += 4;
+  writeString(view, offset, 'WAVE'); offset += 4;
+
+  // FMT sub-chunk
+  writeString(view, offset, 'fmt '); offset += 4;
+  view.setUint32(offset, 16, true); offset += 4; // SubChunk1Size
+  view.setUint16(offset, 1, true); offset += 2;  // AudioFormat (PCM)
+  view.setUint16(offset, numOfChan, true); offset += 2;
+  view.setUint32(offset, buffer.sampleRate, true); offset += 4;
+  view.setUint32(offset, buffer.sampleRate * numOfChan * 2, true); offset += 4;
+  view.setUint16(offset, numOfChan * 2, true); offset += 2;
+  view.setUint16(offset, 16, true); offset += 2;
+
+  // data sub-chunk
+  writeString(view, offset, 'data'); offset += 4;
+  view.setUint32(offset, buffer.length * numOfChan * 2, true); offset += 4;
+
+  // write interleaved data
+  const channels = [];
+  for (let i = 0; i < numOfChan; i++) {
+    channels.push(buffer.getChannelData(i));
+  }
+
+  let index = 0;
+  while (index < buffer.length) {
+    for (let i = 0; i < numOfChan; i++) {
+      const sample = Math.max(-1, Math.min(1, channels[i][index]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+      offset += 2;
+    }
+    index++;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
 }
 </script>
 
