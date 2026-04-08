@@ -45,7 +45,7 @@ button:hover { background: #2ea043; }
 <body>
 <div class="container">
 
-<h2>النظام الترددي + صوت بهوية لكل مستخدم<br>م: رأفت عمر</h2>
+<h2>النظام الترددي + هوية صوتية لكل مستخدم<br>م: رأفت عمر</h2>
 
 <label>مفتاح المستخدم:</label>
 <input id="userKey" type="number" value="123456789">
@@ -77,8 +77,8 @@ button:hover { background: #2ea043; }
 
 <div class="output" id="decodeOutput">—</div>
 
-<button onclick="speakText()">🔊 تشغيل الصوت بهوية المستخدم</button>
-<div class="small">الصوت الناتج يعتمد على البصمة الصوتية المخزنة داخل الباركود، فيختلف بوضوح بين المستخدمين.</div>
+<button onclick="speakText()">🔊 تشغيل هوية صوتية من الباركود</button>
+<div class="small">الصوت الناتج صناعي، يعتمد على البصمة الصوتية المخزنة داخل الباركود، ويختلف بوضوح بين المستخدمين.</div>
 
 </div>
 
@@ -132,7 +132,7 @@ function codeToWord(C){
   return word;
 }
 
-/* ===== base36 → BigInt (دقيقة) ===== */
+/* ===== base36 → BigInt ===== */
 function base36ToBigInt(str){
   let res = 0n;
   for (let i = 0; i < str.length; i++){
@@ -290,7 +290,7 @@ async function decodeFromQRImage(){
   html5Qr.clear();
 }
 
-/* ===== صوت بهوية المستخدم ===== */
+/* ===== صوت صناعي يعتمد على البصمة ===== */
 function speakText(){
   const text = document.getElementById("decodeOutput").textContent.trim();
   if (!text) {
@@ -299,24 +299,43 @@ function speakText(){
   }
 
   const vp = parseInt(lastDecodedVoicePrint || "1", 10);
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "ar-SA";
 
-  const voices = speechSynthesis.getVoices();
-  if (voices.length > 0) {
-    // اختيار صوت مختلف حسب البصمة
-    const voiceIndex = Math.abs(vp) % voices.length;
-    utter.voice = voices[voiceIndex];
+  // تحويل النص إلى سلسلة من الترددات تعتمد على النص + البصمة
+  const freqs = [];
+  for (let i = 0; i < text.length; i++) {
+    const charCode = text.charCodeAt(i);
+    const base = 200 + ((vp % 300));          // يعتمد على البصمة
+    const freq = base + ((charCode * (vp % 97 + 3)) % 800);
+    freqs.push(freq);
   }
 
-  // طبقة الصوت (pitch) وسرعته (rate) تعتمد على البصمة
-  const basePitch = 0.7 + ((vp % 40) / 100); // 0.7 – 1.1
-  const baseRate  = 0.8 + ((vp % 50) / 100); // 0.8 – 1.3
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  let t = audioCtx.currentTime;
 
-  utter.pitch = basePitch;
-  utter.rate  = baseRate;
+  freqs.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
 
-  speechSynthesis.speak(utter);
+    // شكل الموجة يعتمد على البصمة
+    const waveType = ["sine", "square", "sawtooth", "triangle"][Math.abs(vp) % 4];
+    osc.type = waveType;
+
+    // التردد
+    osc.frequency.value = freq;
+
+    // حجم الصوت يعتمد على البصمة
+    gain.gain.value = 0.12 + ((vp % 40) / 300);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    // كل حرف = 0.07 ثانية تقريبًا
+    const dur = 0.07 + ((vp % 10) / 5000); // اختلاف بسيط في الإيقاع
+    osc.start(t);
+    osc.stop(t + dur);
+
+    t += dur;
+  });
 }
 
 /* ===== حفظ + مشاركة ===== */
