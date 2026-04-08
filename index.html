@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>QR صوتي ذكي</title>
+<title>النظام الترددي اللغوي — QR صوتي</title>
 
 <style>
 body {
@@ -40,9 +40,11 @@ button { background: #238636; color: white; }
 <body>
 <div class="container">
 
-<h2>🎤 صوت → نص → QR</h2>
+<h2>النظام الترددي + الصوت</h2>
 
-<textarea id="sentenceInput" placeholder="النص هنا"></textarea>
+<input id="userKey" type="number" value="123456789">
+
+<textarea id="sentenceInput"></textarea>
 
 <button onclick="startSpeechToText()">🎤 تحويل الصوت إلى نص</button>
 <button onclick="startRecording()">🎙 تسجيل الصوت</button>
@@ -56,10 +58,8 @@ button { background: #238636; color: white; }
 
 <hr>
 
-<h2>📷 فك QR</h2>
-
 <textarea id="qrInput"></textarea>
-<button onclick="decodeFromQR()">🔓 فك</button>
+<button onclick="decodeFromQR()">🔓 فك QR</button>
 
 <div class="output" id="decodeOutput"></div>
 
@@ -68,33 +68,80 @@ button { background: #238636; color: white; }
 </div>
 
 <script>
+
+/* ====== النظام الأصلي ====== */
+const B = 32;
+const LMAX = 12;
+const f0 = 100000n;
+const df = 1n;
+
+const indexToChar = {
+  0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
+  8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",
+  15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",
+  22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"
+};
+
+const charToIndex = {};
+for (const [i,ch] of Object.entries(indexToChar)) {
+  if (ch) charToIndex[ch] = parseInt(i);
+}
+
+function normalizeArabic(s){
+  return (s||"")
+  .replace(/[إأآ]/g,"ا")
+  .replace(/ى/g,"ي")
+  .replace(/ؤ/g,"و")
+  .replace(/ئ/g,"ي")
+  .replace(/ة/g,"ه")
+  .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"");
+}
+
+function wordToCode(word){
+  let C = 0n;
+  for(let i=0;i<word.length;i++){
+    const idx = charToIndex[word[i]] || 0;
+    C += BigInt(idx) * (32n ** BigInt(i));
+  }
+  return C;
+}
+
+function codeToWord(C){
+  let word = "";
+  for(let i=0;i<LMAX;i++){
+    const idx = Number(C % 32n);
+    C /= 32n;
+    word += indexToChar[idx] || "";
+  }
+  return word;
+}
+
+/* ====== الصوت ====== */
+
 let voiceFingerprint = null;
 let mediaRecorder;
 let audioChunks = [];
 
-/* 🎤 تحويل صوت إلى نص */
 function startSpeechToText(){
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const recognition = new SpeechRecognition();
-  recognition.lang = "ar-SA";
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = "ar-SA";
+  rec.start();
 
-  recognition.start();
-
-  recognition.onresult = e => {
-    const text = e.results[0][0].transcript;
-    document.getElementById("sentenceInput").value = text;
+  rec.onresult = e => {
+    document.getElementById("sentenceInput").value =
+      e.results[0][0].transcript;
   };
 }
 
-/* 🎙 تسجيل الصوت */
 async function startRecording(){
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
   mediaRecorder = new MediaRecorder(stream);
   audioChunks = [];
 
   mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
 
-  mediaRecorder.onstop = async () => {
+  mediaRecorder.onstop = async ()=>{
     const blob = new Blob(audioChunks);
     document.getElementById("audioPlayback").src = URL.createObjectURL(blob);
     await extractVoiceFingerprint(blob);
@@ -107,33 +154,42 @@ function stopRecording(){
   mediaRecorder.stop();
 }
 
-/* 🧠 بصمة صوت بسيطة */
 async function extractVoiceFingerprint(blob){
   const ctx = new AudioContext();
-  const buffer = await blob.arrayBuffer();
-  const audio = await ctx.decodeAudioData(buffer);
+  const buf = await blob.arrayBuffer();
+  const audio = await ctx.decodeAudioData(buf);
   const data = audio.getChannelData(0);
 
   let sum = 0;
-  for (let i = 0; i < data.length; i += 1000) {
+  for(let i=0;i<data.length;i+=1000){
     sum += Math.abs(data[i]) * 1000;
   }
-
   voiceFingerprint = Math.floor(sum);
 }
 
-/* 📦 تحويل إلى QR */
+/* ====== QR ====== */
+
 function encodeToQR(){
-  const text = document.getElementById("sentenceInput").value;
+  const key = BigInt(document.getElementById("userKey").value);
+  let sentence = normalizeArabic(document.getElementById("sentenceInput").value);
 
   const payload = JSON.stringify({
-    text: text,
+    text: sentence,
     voice: voiceFingerprint || 0
   });
 
-  const compressed = LZString.compressToEncodedURIComponent(payload);
+  const words = payload.split(" ");
+  const result = [];
 
-  document.getElementById("qrcode").innerHTML = "";
+  words.forEach(w=>{
+    const C = wordToCode(w) ^ key;
+    const f = f0 + C;
+    result.push(f.toString(36));
+  });
+
+  const compressed = LZString.compressToEncodedURIComponent(result.join(","));
+
+  document.getElementById("qrcode").innerHTML="";
   new QRCode(document.getElementById("qrcode"), {
     text: compressed,
     width: 250,
@@ -141,27 +197,40 @@ function encodeToQR(){
   });
 }
 
-/* 🔓 فك QR */
 function decodeFromQR(){
+  const key = BigInt(document.getElementById("userKey").value);
   const data = document.getElementById("qrInput").value;
 
   const raw = LZString.decompressFromEncodedURIComponent(data);
-  if (!raw) return;
+  const parts = raw.split(",");
 
-  const parsed = JSON.parse(raw);
+  const words = parts.map(p=>{
+    const f = BigInt(parseInt(p,36));
+    const C = (f - f0) ^ key;
+    return codeToWord(C);
+  });
+
+  const joined = words.join(" ");
+
+  let parsed;
+  try{
+    parsed = JSON.parse(joined);
+  }catch{
+    document.getElementById("decodeOutput").textContent = joined;
+    return;
+  }
 
   document.getElementById("decodeOutput").textContent = parsed.text;
   window.decodedVoicePrint = parsed.voice;
 }
 
-/* 🔊 تشغيل الصوت */
 function speakText(){
   const text = document.getElementById("decodeOutput").textContent;
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "ar-SA";
-  speechSynthesis.speak(utter);
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang="ar-SA";
+  speechSynthesis.speak(u);
 }
-</script>
 
+</script>
 </body>
 </html>
