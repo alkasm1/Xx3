@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>النظام الترددي اللغوي — QR صوتي</title>
+<title>النظام الترددي اللغوي — QR صوتي متكامل</title>
 
 <style>
 body {
@@ -44,7 +44,7 @@ button { background: #238636; color: white; }
 
 <input id="userKey" type="number" value="123456789">
 
-<textarea id="sentenceInput"></textarea>
+<textarea id="sentenceInput" placeholder="أدخل النص أو استخدم الصوت"></textarea>
 
 <button onclick="startSpeechToText()">🎤 تحويل الصوت إلى نص</button>
 <button onclick="startRecording()">🎙 تسجيل الصوت</button>
@@ -56,10 +56,20 @@ button { background: #238636; color: white; }
 
 <div id="qrcode"></div>
 
+<button onclick="saveQR()">💾 حفظ الباركود</button>
+<button onclick="shareQR()">📤 مشاركة الباركود</button>
+
 <hr>
 
-<textarea id="qrInput"></textarea>
-<button onclick="decodeFromQR()">🔓 فك QR</button>
+<h3>فك الباركود</h3>
+
+<textarea id="qrInput" placeholder="الصق النص أو استخدم صورة"></textarea>
+
+<label>تحميل صورة QR:</label>
+<input type="file" id="qrFileInput" accept="image/*">
+
+<button onclick="decodeFromQR()">🔓 فك من نص</button>
+<button onclick="decodeFromQRImage()">🖼️ فك من صورة</button>
 
 <div class="output" id="decodeOutput"></div>
 
@@ -67,13 +77,14 @@ button { background: #238636; color: white; }
 
 </div>
 
+<div id="reader-temp" style="display:none;"></div>
+
 <script>
 
-/* ====== النظام الأصلي ====== */
+/* ===== النظام الترددي ===== */
 const B = 32;
 const LMAX = 12;
 const f0 = 100000n;
-const df = 1n;
 
 const indexToChar = {
   0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",
@@ -94,7 +105,7 @@ function normalizeArabic(s){
   .replace(/ؤ/g,"و")
   .replace(/ئ/g,"ي")
   .replace(/ة/g,"ه")
-  .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,"");
+  .replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s{}":,]/g,"");
 }
 
 function wordToCode(word){
@@ -116,8 +127,7 @@ function codeToWord(C){
   return word;
 }
 
-/* ====== الصوت ====== */
-
+/* ===== الصوت ===== */
 let voiceFingerprint = null;
 let mediaRecorder;
 let audioChunks = [];
@@ -128,7 +138,7 @@ function startSpeechToText(){
   rec.lang = "ar-SA";
   rec.start();
 
-  rec.onresult = e => {
+  rec.onresult = e=>{
     document.getElementById("sentenceInput").value =
       e.results[0][0].transcript;
   };
@@ -139,7 +149,7 @@ async function startRecording(){
   mediaRecorder = new MediaRecorder(stream);
   audioChunks = [];
 
-  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+  mediaRecorder.ondataavailable = e=>audioChunks.push(e.data);
 
   mediaRecorder.onstop = async ()=>{
     const blob = new Blob(audioChunks);
@@ -167,11 +177,10 @@ async function extractVoiceFingerprint(blob){
   voiceFingerprint = Math.floor(sum);
 }
 
-/* ====== QR ====== */
-
+/* ===== QR ===== */
 function encodeToQR(){
   const key = BigInt(document.getElementById("userKey").value);
-  let sentence = normalizeArabic(document.getElementById("sentenceInput").value);
+  const sentence = normalizeArabic(document.getElementById("sentenceInput").value);
 
   const payload = JSON.stringify({
     text: sentence,
@@ -197,13 +206,15 @@ function encodeToQR(){
   });
 }
 
+/* ===== فك ===== */
 function decodeFromQR(){
   const key = BigInt(document.getElementById("userKey").value);
   const data = document.getElementById("qrInput").value;
 
   const raw = LZString.decompressFromEncodedURIComponent(data);
-  const parts = raw.split(",");
+  if(!raw) return;
 
+  const parts = raw.split(",");
   const words = parts.map(p=>{
     const f = BigInt(parseInt(p,36));
     const C = (f - f0) ^ key;
@@ -224,11 +235,57 @@ function decodeFromQR(){
   window.decodedVoicePrint = parsed.voice;
 }
 
+/* ===== صوت ===== */
 function speakText(){
   const text = document.getElementById("decodeOutput").textContent;
   const u = new SpeechSynthesisUtterance(text);
   u.lang="ar-SA";
   speechSynthesis.speak(u);
+}
+
+/* ===== حفظ + مشاركة ===== */
+function getQRDataURL(){
+  const img = document.querySelector("#qrcode img");
+  const canvas = document.querySelector("#qrcode canvas");
+  if (img && img.src) return img.src;
+  if (canvas) return canvas.toDataURL("image/png");
+}
+
+function saveQR(){
+  const url = getQRDataURL();
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "qr-code.png";
+  a.click();
+}
+
+async function shareQR(){
+  const url = getQRDataURL();
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const file = new File([blob], "qr.png");
+
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file], title:"QR"});
+  }
+}
+
+/* ===== فك من صورة ===== */
+async function decodeFromQRImage(){
+  const file = document.getElementById("qrFileInput").files[0];
+  if(!file) return;
+
+  const html5Qr = new Html5Qrcode("reader-temp");
+
+  try{
+    const result = await html5Qr.scanFile(file, true);
+    document.getElementById("qrInput").value = result;
+    decodeFromQR();
+  }catch(e){
+    alert("فشل قراءة الصورة");
+  }
+
+  html5Qr.clear();
 }
 
 </script>
