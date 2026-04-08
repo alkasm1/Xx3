@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>QR صوتي ذكي</title>
+
+<style>
+body {
+  font-family: "Cairo", sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+}
+.container {
+  max-width: 900px;
+  margin: 40px auto;
+  background: #161b22;
+  padding: 25px;
+  border-radius: 12px;
+}
+textarea, input, button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+}
+button { background: #238636; color: white; }
+.output {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed #30363d;
+}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+
+</head>
+
+<body>
+<div class="container">
+
+<h2>🎤 صوت → نص → QR</h2>
+
+<textarea id="sentenceInput" placeholder="النص هنا"></textarea>
+
+<button onclick="startSpeechToText()">🎤 تحويل الصوت إلى نص</button>
+<button onclick="startRecording()">🎙 تسجيل الصوت</button>
+<button onclick="stopRecording()">⏹ إيقاف التسجيل</button>
+
+<audio id="audioPlayback" controls></audio>
+
+<button onclick="encodeToQR()">📦 تحويل إلى QR</button>
+
+<div id="qrcode"></div>
+
+<hr>
+
+<h2>📷 فك QR</h2>
+
+<textarea id="qrInput"></textarea>
+<button onclick="decodeFromQR()">🔓 فك</button>
+
+<div class="output" id="decodeOutput"></div>
+
+<button onclick="speakText()">🔊 تشغيل الصوت</button>
+
+</div>
+
+<script>
+let voiceFingerprint = null;
+let mediaRecorder;
+let audioChunks = [];
+
+/* 🎤 تحويل صوت إلى نص */
+function startSpeechToText(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SpeechRecognition();
+  recognition.lang = "ar-SA";
+
+  recognition.start();
+
+  recognition.onresult = e => {
+    const text = e.results[0][0].transcript;
+    document.getElementById("sentenceInput").value = text;
+  };
+}
+
+/* 🎙 تسجيل الصوت */
+async function startRecording(){
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  audioChunks = [];
+
+  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+  mediaRecorder.onstop = async () => {
+    const blob = new Blob(audioChunks);
+    document.getElementById("audioPlayback").src = URL.createObjectURL(blob);
+    await extractVoiceFingerprint(blob);
+  };
+
+  mediaRecorder.start();
+}
+
+function stopRecording(){
+  mediaRecorder.stop();
+}
+
+/* 🧠 بصمة صوت بسيطة */
+async function extractVoiceFingerprint(blob){
+  const ctx = new AudioContext();
+  const buffer = await blob.arrayBuffer();
+  const audio = await ctx.decodeAudioData(buffer);
+  const data = audio.getChannelData(0);
+
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 1000) {
+    sum += Math.abs(data[i]) * 1000;
+  }
+
+  voiceFingerprint = Math.floor(sum);
+}
+
+/* 📦 تحويل إلى QR */
+function encodeToQR(){
+  const text = document.getElementById("sentenceInput").value;
+
+  const payload = JSON.stringify({
+    text: text,
+    voice: voiceFingerprint || 0
+  });
+
+  const compressed = LZString.compressToEncodedURIComponent(payload);
+
+  document.getElementById("qrcode").innerHTML = "";
+  new QRCode(document.getElementById("qrcode"), {
+    text: compressed,
+    width: 250,
+    height: 250
+  });
+}
+
+/* 🔓 فك QR */
+function decodeFromQR(){
+  const data = document.getElementById("qrInput").value;
+
+  const raw = LZString.decompressFromEncodedURIComponent(data);
+  if (!raw) return;
+
+  const parsed = JSON.parse(raw);
+
+  document.getElementById("decodeOutput").textContent = parsed.text;
+  window.decodedVoicePrint = parsed.voice;
+}
+
+/* 🔊 تشغيل الصوت */
+function speakText(){
+  const text = document.getElementById("decodeOutput").textContent;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "ar-SA";
+  speechSynthesis.speak(utter);
+}
+</script>
+
+</body>
+</html>
