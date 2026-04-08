@@ -47,7 +47,6 @@ button { background: #238636; color: white; }
 
 <textarea id="sentenceInput" placeholder="اكتب أو استخدم الصوت"></textarea>
 
-<button onclick="recordAudio()">🎤 تسجيل صوت للحصول على بصمة</button>
 <button onclick="startSpeechToText()">🎤 تحويل الصوت إلى نص</button>
 
 <button onclick="encodeToQR()">📦 تحويل إلى QR</button>
@@ -124,38 +123,14 @@ function codeToWord(C){
   return word;
 }
 
-/* ===== بصمة صوتية حقيقية (تجريبية) ===== */
-let currentVoicePrint = "0";
-let lastRecordedBlob = null;
-
-async function extractVoicePrintFromBlob(blob){
-  const buf = await blob.arrayBuffer();
-  const u8 = new Uint8Array(buf);
-
-  let hash = 0;
-  for (let i = 0; i < 2000 && i < u8.length; i++) {
-    hash = (hash * 31 + u8[i]) % 1000000007;
+/* ===== إصلاح مهم: base36 → BigInt ===== */
+function base36ToBigInt(str){
+  let res = 0n;
+  for (let i = 0; i < str.length; i++){
+    const v = BigInt(parseInt(str[i], 36));
+    res = res * 36n + v;
   }
-
-  return hash.toString();
-}
-
-/* ===== تسجيل صوت للحصول على بصمة ===== */
-async function recordAudio(){
-  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-  const recorder = new MediaRecorder(stream);
-  let chunks = [];
-
-  recorder.ondataavailable = e => chunks.push(e.data);
-
-  recorder.onstop = async ()=>{
-    lastRecordedBlob = new Blob(chunks, {type:"audio/webm"});
-    currentVoicePrint = await extractVoicePrintFromBlob(lastRecordedBlob);
-    alert("تم استخراج بصمة صوتية للمستخدم");
-  };
-
-  recorder.start();
-  setTimeout(()=>recorder.stop(), 2000);
+  return res;
 }
 
 /* ===== صوت → نص ===== */
@@ -171,13 +146,9 @@ function startSpeechToText(){
   rec.lang = "ar-SA";
   rec.start();
 
-  rec.onresult = async e=>{
-    const text = e.results[0][0].transcript;
-    document.getElementById("sentenceInput").value = text;
-
-    if (lastRecordedBlob){
-      currentVoicePrint = await extractVoicePrintFromBlob(lastRecordedBlob);
-    }
+  rec.onresult = e=>{
+    document.getElementById("sentenceInput").value =
+      e.results[0][0].transcript;
   };
 }
 
@@ -195,12 +166,7 @@ function encodeToQR(){
     result.push(f.toString(36));
   });
 
-  const payload = {
-    text: result.join(","),
-    voiceprint: currentVoicePrint
-  };
-
-  const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+  const compressed = LZString.compressToEncodedURIComponent(result.join(","));
 
   document.getElementById("qrcode").innerHTML="";
   new QRCode(document.getElementById("qrcode"), {
@@ -211,22 +177,16 @@ function encodeToQR(){
 }
 
 /* ===== فك ===== */
-let lastDecodedVoicePrint = "0";
-
 function decodeFromQR(){
   const key = BigInt(document.getElementById("userKey").value);
   const data = document.getElementById("qrInput").value;
 
-  const json = LZString.decompressFromEncodedURIComponent(data);
-  if(!json) return;
-
-  const payload = JSON.parse(json);
-  const raw = payload.text;
-  lastDecodedVoicePrint = payload.voiceprint;
+  const raw = LZString.decompressFromEncodedURIComponent(data);
+  if(!raw) return;
 
   const parts = raw.split(",");
   const words = parts.map(p=>{
-    const f = BigInt(parseInt(p,36));
+    const f = base36ToBigInt(p);   // ← ← ← الإصلاح هنا
     const C = (f - f0) ^ key;
     return codeToWord(C);
   });
@@ -234,21 +194,12 @@ function decodeFromQR(){
   document.getElementById("decodeOutput").textContent = words.join(" ");
 }
 
-/* ===== صوت ذكي يعتمد على البصمة ===== */
+/* ===== صوت ذكي ===== */
 function speakText(){
   const text = document.getElementById("decodeOutput").textContent;
-  const vp = parseInt(lastDecodedVoicePrint || "1");
 
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = "ar-SA";
-
-  const voices = speechSynthesis.getVoices();
-  if (voices.length > 0) {
-    utter.voice = voices[vp % voices.length];
-  }
-
-  utter.pitch = 0.5 + (vp % 50) / 100;
-  utter.rate  = 0.8 + (vp % 30) / 100;
 
   speechSynthesis.speak(utter);
 }
