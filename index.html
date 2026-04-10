@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ALM Voice-ID System</title>
+    
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <style>
+        :root { --primary: #0BA37F; --secondary: #1a73e8; --accent: #f39c12; --bg: #0d1117; --card: #161b22; --text: #e6edf3; }
+        
+        body { font-family: 'Cairo', sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 0; direction: rtl; }
+        
+        header { background: var(--primary); color: white; padding: 20px; text-align: center; font-size: 18px; font-weight: bold; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        
+        .nav-tabs { display: flex; background: var(--card); border-bottom: 1px solid #30363d; position: sticky; top: 0; z-index: 100; }
+        .tab-btn { flex: 1; padding: 15px; border: none; background: none; font-family: 'Cairo'; font-size: 14px; color: #8b949e; cursor: pointer; border-bottom: 3px solid transparent; }
+        .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: bold; }
+
+        .container { padding: 15px; max-width: 600px; margin: auto; padding-bottom: 100px; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .card { background: var(--card); border-radius: 15px; padding: 20px; margin-bottom: 20px; border: 1px solid #30363d; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        h3 { font-size: 16px; margin-top: 0; color: var(--primary); border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 15px; }
+        
+        textarea, input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #30363d; border-radius: 10px; box-sizing: border-box; font-family: 'Cairo'; font-size: 15px; background: #0d1117; color: white; }
+        
+        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        button { width: 100%; padding: 14px; background: var(--primary); color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.3s; }
+        button:active { transform: scale(0.97); }
+        .btn-audio { background: var(--accent); }
+        .btn-outline { background: transparent; color: var(--primary); border: 2px solid var(--primary); }
+        .btn-secondary { background: var(--secondary); }
+
+        #qrcode { background: white; padding: 15px; border-radius: 12px; margin: 20px auto; width: fit-content; }
+        
+        .voice-badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 12px; background: #238636; color: white; margin-bottom: 10px; display: none; }
+
+        .output-box { background: #0d1117; border: 1px dashed var(--primary); border-radius: 10px; padding: 15px; min-height: 80px; margin-top: 15px; white-space: pre-wrap; color: #58a6ff; }
+
+        #scan-btn { position: fixed; bottom: 25px; left: 25px; width: 60px; height: 60px; border-radius: 50%; background: var(--primary); color: white; font-size: 24px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 200; }
+        #reader-container { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 1000; }
+        .close-scanner { position: absolute; top: 30px; right: 30px; color: white; font-size: 35px; cursor: pointer; }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
+</head>
+<body>
+
+<header>نظام ALM للتردد اللغوي والبصمة الصوتية</header>
+
+<div class="nav-tabs">
+    <button class="tab-btn active" onclick="showTab('encode')">إنشاء (تشفير)</button>
+    <button class="tab-btn" onclick="showTab('decode')">قراءة (فك التشفير)</button>
+</div>
+
+<div class="container">
+    <!-- Encoding Tab -->
+    <div id="encode-tab" class="tab-content active">
+        <div class="card">
+            <h3>1) استخراج بصمة المستخدم</h3>
+            <div id="voiceStatus" class="voice-badge">تم التقاط البصمة ✓</div>
+            <div class="btn-group">
+                <button class="btn-audio" onclick="recordVoicePrint()"><i class="fas fa-fingerprint"></i> بصمة الصوت</button>
+                <button class="btn-secondary" onclick="startSTT()"><i class="fas fa-microphone"></i> تحويل الصوت لنص</button>
+            </div>
+            <textarea id="sentenceInput" rows="4" placeholder="اكتب النص هنا أو استخدم زر الميكروفون..."></textarea>
+            <input id="userKey" type="number" value="123456789" placeholder="مفتاح الأمان">
+            <button onclick="generateVoiceQR()"><i class="fas fa-qrcode"></i> توليد الباركود بالبصمة</button>
+        </div>
+
+        <div id="qrArea" style="display:none; text-align:center;">
+            <div id="qrcode"></div>
+            <div class="btn-group">
+                <button onclick="saveQR()"><i class="fas fa-save"></i> حفظ</button>
+                <button onclick="shareQR()" class="btn-secondary"><i class="fas fa-share-alt"></i> مشاركة</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Decoding Tab -->
+    <div id="decode-tab" class="tab-content">
+        <div class="card">
+            <h3>2) تحليل الباركود والبصمة</h3>
+            <input type="file" id="qrFileInput" accept="image/*">
+            <button class="btn-outline" onclick="decodeFromImage()"><i class="fas fa-image"></i> فك تشفير صورة</button>
+            <textarea id="qrInput" rows="3" placeholder="أو الصق النص المشفر هنا..."></textarea>
+            <button onclick="decodeManual()"><i class="fas fa-unlock"></i> فك التشفير يدوياً</button>
+        </div>
+
+        <div id="resultCard" class="card" style="display:none;">
+            <h3>النتيجة الصوتية:</h3>
+            <div id="decodeOutput" class="output-box"></div>
+            <button onclick="playVoice()" style="background:#e67e22; margin-top:15px;"><i class="fas fa-play-circle"></i> تشغيل بالبصمة الأصلية</button>
+        </div>
+    </div>
+</div>
+
+<div id="scan-btn" onclick="startLiveScanner()"><i class="fas fa-camera"></i></div>
+
+<div id="reader-container">
+    <span class="close-scanner" onclick="stopLiveScanner()">&times;</span>
+    <div id="reader"></div>
+</div>
+
+<script>
+/* === ALM Engine === */
+const B = 32, LMAX = 12, f0 = 100000n;
+const indexToChar = {0:"",1:"ا",2:"ب",3:"ت",4:"ث",5:"ج",6:"ح",7:"خ",8:"د",9:"ذ",10:"ر",11:"ز",12:"س",13:"ش",14:"ص",15:"ض",16:"ط",17:"ظ",18:"ع",19:"غ",20:"ف",21:"ق",22:"ك",23:"ل",24:"م",25:"ن",26:"ه",27:"و",28:"ي",29:"ء"};
+const charToIndex = Object.fromEntries(Object.entries(indexToChar).map(([i,ch]) => [ch, parseInt(i)]));
+
+let currentVoicePrint = 123; // قيمة افتراضية
+let decodedVoicePrint = 123;
+
+function normalize(s) { return s.replace(/[إأآ]/g,"ا").replace(/ى/g,"ي").replace(/ؤ/g,"و").replace(/ئ/g,"ي").replace(/ة/g,"ه").replace(/[^ءاأإآبتثجحخدذرزسشصضطظعغفقكلمنهوي\s]/g,""); }
+
+function wordToCode(w, key) {
+    let C = 0n;
+    let chars = w.slice(0, LMAX).split('').reverse();
+    for(let i=0; i<chars.length; i++) C += BigInt(charToIndex[chars[i]] || 0) * (32n ** BigInt(i));
+    return (C ^ BigInt(key)).toString(36);
+}
+
+function codeToWord(code36, key) {
+    let C = BigInt(parseInt(code36, 36)) ^ BigInt(key);
+    let res = "";
+    for(let i=0; i<LMAX; i++) { res = (indexToChar[Number(C % 32n)] || "") + res; C /= 32n; }
+    return res;
+}
+
+/* === Voiceprint Logic === */
+async function recordVoicePrint() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        let chunks = [];
+        recorder.ondataavailable = e => chunks.push(e.data);
+        recorder.onstop = async () => {
+            const blob = new Blob(chunks);
+            const buffer = await blob.arrayBuffer();
+            const view = new Uint8Array(buffer);
+            // خوارزمية مبسطة لاستخراج بصمة رقمية من ترددات الصوت
+            let hash = 0;
+            for(let i=0; i<view.length; i+=100) hash = (hash * 31 + view[i]) % 1000;
+            currentVoicePrint = hash;
+            document.getElementById('voiceStatus').style.display = 'inline-block';
+            alert("تم التقاط بصمة صوتك بنجاح: " + hash);
+        };
+        recorder.start();
+        setTimeout(() => recorder.stop(), 2000); // تسجيل لمدة ثانيتين
+    } catch(e) { alert("يجب السماح بالوصول للميكروفون"); }
+}
+
+function startSTT() {
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!Speech) return alert("متصفحك لا يدعم التعرف على الصوت");
+    const rec = new Speech();
+    rec.lang = 'ar-SA';
+    rec.onresult = e => { document.getElementById('sentenceInput').value = e.results[0][0].transcript; };
+    rec.start();
+}
+
+/* === Core Actions === */
+function generateVoiceQR() {
+    const key = document.getElementById('userKey').value;
+    const text = normalize(document.getElementById('sentenceInput').value);
+    if(!text) return alert("أدخل نصاً");
+
+    const codes = text.split(/\s+/).map(w => wordToCode(w, key)).join(',');
+    const payload = { t: codes, v: currentVoicePrint };
+    const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+
+    document.getElementById('qrcode').innerHTML = "";
+    new QRCode(document.getElementById('qrcode'), { text: compressed, width: 250, height: 250 });
+    document.getElementById('qrArea').style.display = 'block';
+}
+
+function decodeManual() {
+    const key = document.getElementById('userKey').value;
+    const data = document.getElementById('qrInput').value.trim();
+    const json = LZString.decompressFromEncodedURIComponent(data);
+    if(!json) return alert("بيانات غير صالحة");
+
+    const payload = JSON.parse(json);
+    decodedVoicePrint = payload.v;
+    const words = payload.t.split(',').map(c => codeToWord(c, key)).join(' ');
+    
+    document.getElementById('decodeOutput').textContent = words;
+    document.getElementById('resultCard').style.display = 'block';
+}
+
+/* === Intelligent Voice Output === */
+function playVoice() {
+    const text = document.getElementById('decodeOutput').textContent;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'ar-SA';
+    
+    // ضبط خصائص الصوت بناءً على البصمة المستخرجة
+    // البصمة تؤثر على حدة الصوت (Pitch) وسرعته (Rate)
+    utter.pitch = 0.5 + (decodedVoicePrint % 15) / 10; // تتراوح بين 0.5 و 2.0
+    utter.rate = 0.8 + (decodedVoicePrint % 5) / 10;   // تتراوح بين 0.8 و 1.3
+    
+    speechSynthesis.speak(utter);
+}
+
+/* === App UI Tools === */
+function showTab(tab) {
+    document.querySelectorAll('.tab-content, .tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tab + '-tab').classList.add('active');
+    event.currentTarget.classList.add('active');
+}
+
+async function decodeFromImage() {
+    const file = document.getElementById('qrFileInput').files[0];
+    if(!file) return;
+    const scanner = new Html5Qrcode("reader");
+    try {
+        const res = await scanner.scanFile(file, true);
+        document.getElementById('qrInput').value = res;
+        decodeManual();
+    } catch(e) { alert("تعذر قراءة الكود"); }
+}
+
+function startLiveScanner() {
+    document.getElementById('reader-container').style.display = 'block';
+    const scanner = new Html5Qrcode("reader");
+    scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => {
+        document.getElementById('qrInput').value = text;
+        stopLiveScanner();
+        showTab('decode');
+        decodeManual();
+    });
+}
+
+function stopLiveScanner() { document.getElementById('reader-container').style.display = 'none'; }
+
+function saveQR() {
+    const canvas = document.querySelector("#qrcode canvas");
+    const a = document.createElement("a");
+    a.download = "VoiceQR.png";
+    a.href = canvas.toDataURL();
+    a.click();
+}
+
+async function shareQR() {
+    const canvas = document.querySelector("#qrcode canvas");
+    const blob = await (await fetch(canvas.toDataURL())).blob();
+    const file = new File([blob], 'qr.png', {type:'image/png'});
+    if(navigator.share) navigator.share({files:[file]});
+}
+</script>
+</body>
+</html>
